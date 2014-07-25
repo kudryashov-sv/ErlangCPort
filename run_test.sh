@@ -8,6 +8,6 @@ B_SIZE=$1
 P_COUNT=$2
 I_COUNT=$3
 
-erl +K true -pa ebin -pa deps/*/ebin -eval "{ok, P, F} = porttest:test_suite_new($P_COUNT, $B_SIZE), porttest:run_test_suite(P, F, $I_COUNT), init:stop(0)." -noshell || exit 1
+erl +a 8192 +A 100 +K true -pa ebin -pa deps/*/ebin -eval "{ok, P, F} = porttest:test_suite_new($P_COUNT, $B_SIZE), porttest:run_test_suite(P, F, $I_COUNT), init:stop(0)." || exit 1
 
 echo "OK"

@@ -19,20 +19,26 @@ test_suite_new(PortNum, BlockSize) ->
 
 run_test_suite(Ports, Flusher, Count) ->
     io:format("*** test started ***~n"),
+    put(test_suite_start, os:timestamp()),
     run_test_suite(Ports, Flusher, Count, 0).
 
 run_test_suite(_, Flusher, Count, Count) ->
     io:format("*** test end ***~n"),
     ok = stop_flusher(Flusher),
+    SuiteStartTime = get(test_suite_start),
+    SuiteEndTime = os:timestamp(),
     Statistics = [element(2, X) || X <- ets:lookup(?TBL_NAME, tc)],
-    BusyInfo = [element(2, X) || X <- ets:lookup(?TBL_NAME, busy_info)],
     All  = ets:lookup_element(?CNT_NAME, all, 2),
     Good = ets:lookup_element(?CNT_NAME, good, 2),
     Busy = ets:lookup_element(?CNT_NAME, busy, 2),
+    TestTime = timer:now_diff(SuiteEndTime, SuiteStartTime),
+
     io:format("~p~n", [bear:get_statistics(Statistics)]),
     io:format("all loops count: ~w~ngood loops: ~w~nbusy: ~w~n",
               [All, Good, Busy]),
-    io:format("busy info:~n~p~n", [BusyInfo]),
+    io:format("test time: ~.3f seconds~n", [TestTime / 1000000]),
+    io:format("avg RPS: ~.3f~n", [All / (TestTime / 1000000)]),
+
     ok;
 run_test_suite(Ports, Flusher, Count, Current) ->
     Keys = [{element(2, Port),
@@ -44,7 +50,7 @@ run_test_suite(Ports, Flusher, Count, Current) ->
                       ok;
                   timeout ->
                       io:format("timeout:~n"),
-                      Bad = what_wrong_with_this(Flusher, XPort),
+                      Bad = what_wrong_with_this([XKey, Flusher], [XPort]),
                       io:format("~p~n", [Bad]),
                       exit(bad)
               end
@@ -105,15 +111,12 @@ test_port_flusher(Port) ->
             exit({port_loop_badarg, X})
     end.
               
-what_wrong_with_this(Pid, Port) ->
-    ProcInfo = (catch erlang:process_info(Pid)),
-    PortInfo = (catch erlang:port_info(Port)),
-    %% true = ets:insert(?TBL_NAME,
-    %%                   [{busy_info,
-    %%                     [
-    %%                      {pid, Pid},
-    %%                      {port, Port},
-    %%                      {process_info, ProcInfo},
-    %%                      {port_info, PortInfo}
-    %%                     ]}]),
-    {ProcInfo, PortInfo}.
+what_wrong_with_this(Pids, Ports) ->
+    {what_wrong_with_pids(Pids), what_wrong_with_ports(Ports)}.
+
+what_wrong_with_pids(Pids) ->
+    [{Pid, (catch erlang:process_info(Pid))} || Pid <- Pids].
+
+what_wrong_with_ports(Ports) ->
+    [{Port, (catch erlang:port_info(Port))} || Port <- Ports].
+
