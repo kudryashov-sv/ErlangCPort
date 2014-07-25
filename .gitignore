@@ -1,3 +1,5 @@
 ebin
 cport
 deps
+erl_crush.dump
+erl_crash.dump

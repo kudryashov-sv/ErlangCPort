@@ -35,10 +35,19 @@ run_test_suite(_, Flusher, Count, Count) ->
     io:format("busy info:~n~p~n", [BusyInfo]),
     ok;
 run_test_suite(Ports, Flusher, Count, Current) ->
-    Keys = [rpc:async_call(node(), ?MODULE, test_once, [Port]) || Port <- Ports],
+    Keys = [{element(2, Port),
+             rpc:async_call(node(), ?MODULE, test_once, [Port])} || Port <- Ports],
     lists:foreach(
-      fun(XKey) ->
-	      {value, ok} = rpc:nb_yield(XKey, 1000)
+      fun({XPort, XKey}) ->
+	      case rpc:nb_yield(XKey, 1000) of
+                  {value, ok} ->
+                      ok;
+                  timeout ->
+                      io:format("timeout:~n"),
+                      Bad = what_wrong_with_this(Flusher, XPort),
+                      io:format("~p~n", [Bad]),
+                      exit(bad)
+              end
       end,
       Keys),
     run_test_suite(Ports, Flusher, Count, Current + 1).
@@ -99,13 +108,12 @@ test_port_flusher(Port) ->
 what_wrong_with_this(Pid, Port) ->
     ProcInfo = (catch erlang:process_info(Pid)),
     PortInfo = (catch erlang:port_info(Port)),
-    true = ets:insert(?TBL_NAME,
-                      [{busy_info,
-                        [
-                         {pid, Pid},
-                         {port, Port},
-                         {process_info, ProcInfo},
-                         {port_info, PortInfo}
-                        ]}]),
-    ok.
-
+    %% true = ets:insert(?TBL_NAME,
+    %%                   [{busy_info,
+    %%                     [
+    %%                      {pid, Pid},
+    %%                      {port, Port},
+    %%                      {process_info, ProcInfo},
+    %%                      {port_info, PortInfo}
+    %%                     ]}]),
+    {ProcInfo, PortInfo}.
