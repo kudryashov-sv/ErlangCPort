@@ -1,7 +1,9 @@
+#include <stdlib.h>
 #include <stdio.h>
 #include <malloc.h>
 #include <errno.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef unsigned char byte;
 
@@ -51,11 +53,13 @@ int write_exact(byte *buf, int len)
   return len;
 }
 
-int main() {
+int main(int argc, char **argv) {
+  int sleep_time = atoi(argv[1]);
   int fn, arg, res;
   byte *buf = malloc(31457280); // 30 mb
   int len = 0;
   while ((len = read_cmd(buf)) > 0) {
+    usleep(sleep_time);
     write_cmd(buf, len);
   }
 }

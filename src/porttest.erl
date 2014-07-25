@@ -2,73 +2,110 @@
 
 -compile(export_all).
 
--define(CMD_NAME, "./cport").
+-define(TBL_NAME, the_table).
+-define(CNT_NAME, the_table_cnt).
 
 test_suite_new(PortNum, BlockSize) ->
+    application:start(porttest),
+    
     Block = <<0:(BlockSize * 8)>>,
-    Pids = [test_port_new(Block) || _ <- lists:seq(1, PortNum)],
-    {ok, Pids}.
+    {PortInfo, Flusher} = test_port_new(Block),
+    Ports = lists:duplicate(PortNum, PortInfo),
 
-run_test_suite(Pids, Count) ->
-    io:format("*** test started ***~n      "),
-    lists:foreach(
-      fun(X) ->
-	      io:format("#~-6B ", [X])
-      end,
-      lists:seq(1, length(Pids))),
-    io:format("~n"),
-    run_test_suite(Pids, Count, 0).
+    ?TBL_NAME = ets:new(?TBL_NAME, [public, named_table, bag]),
+    ?CNT_NAME = ets:new(?CNT_NAME, [public, named_table, set]),
+    true = ets:insert(?CNT_NAME, [{good, 0}, {busy, 0}, {all, 0}]),
+    {ok, Ports, Flusher}.
 
-run_test_suite(_, Count, Count) ->
+run_test_suite(Ports, Flusher, Count) ->
+    io:format("*** test started ***~n"),
+    run_test_suite(Ports, Flusher, Count, 0).
+
+run_test_suite(_, Flusher, Count, Count) ->
     io:format("*** test end ***~n"),
+    ok = stop_flusher(Flusher),
+    Statistics = [element(2, X) || X <- ets:lookup(?TBL_NAME, tc)],
+    BusyInfo = [element(2, X) || X <- ets:lookup(?TBL_NAME, busy_info)],
+    All  = ets:lookup_element(?CNT_NAME, all, 2),
+    Good = ets:lookup_element(?CNT_NAME, good, 2),
+    Busy = ets:lookup_element(?CNT_NAME, busy, 2),
+    io:format("~p~n", [bear:get_statistics(Statistics)]),
+    io:format("all loops count: ~w~ngood loops: ~w~nbusy: ~w~n",
+              [All, Good, Busy]),
+    io:format("busy info:~n~p~n", [BusyInfo]),
     ok;
-run_test_suite(Pids, Count, Current) ->
-    Keys = [rpc:async_call(node(), ?MODULE, test_once, [Pid]) || Pid <- Pids],
-    io:format("~4B: ", [Current + 1]),
+run_test_suite(Ports, Flusher, Count, Current) ->
+    Keys = [rpc:async_call(node(), ?MODULE, test_once, [Port]) || Port <- Ports],
     lists:foreach(
       fun(XKey) ->
-	      {value, {ok, XValue}} = rpc:nb_yield(XKey, 1000),
-	      io:format("~-7B ", [XValue])
+	      {value, ok} = rpc:nb_yield(XKey, 1000)
       end,
       Keys),
-    io:format("~n"),
-    run_test_suite(Pids, Count, Current + 1).
+    run_test_suite(Ports, Flusher, Count, Current + 1).
 
-test_once(Pid) ->
-    Pid ! {test, self()},
+stop_flusher(Flusher) ->
+    Flusher ! {stop, self()},
     receive
-	{ok, Pid, Result} ->
-	    {ok, Result}
-
-    after 1000 ->
-	    exit(timeout)
+        {ok, Flusher} ->
+            ok
+    after 3000 ->
+            exit('bad_flusher_can\'t stop')
     end.
+
+test_once({Block, Port, SleepTime}) ->
+    case erlang:port_command(Port, make_packet(Block), [nosuspend]) of
+        true ->
+            ets:update_counter(?CNT_NAME, good, 1);
+        false ->
+            ets:update_counter(?CNT_NAME, busy, 1),
+            true = erlang:port_command(Port, make_packet(Block))
+    end,
+    ets:update_counter(?CNT_NAME, all, 1),
+    timer:sleep(SleepTime),
+    ok.
+
+make_packet(Block) ->
+    erlang:term_to_binary({os:timestamp(), Block}).
 
 test_port_new(Block) ->
-    spawn_link(?MODULE, port_loop, [Block]).
-
-port_loop(Block) ->
-    PortId = open_port({spawn, ?CMD_NAME}, [use_stdio, binary, {packet, 4}]),
-    port_loop(PortId, Block).
-
-port_loop(PortId, Block) ->
+    Self = self(),
+    Flusher =
+        spawn_link(
+          fun() ->
+                  {ok, SleepTime} = application:get_env(porttest, sleep_time),
+                  {ok, AfterSendSleep} = application:get_env(porttest, after_send_sleep),
+                  Port = erlang:open_port({spawn, "./cport " ++ integer_to_list(SleepTime)},
+                                          [use_stdio, binary, {packet, 4}]),
+                  Self ! {port_info, {Block, Port, AfterSendSleep}},
+                  test_port_flusher(Port)
+          end),
     receive
-	{test, Caller} ->
-	    StartTime = now(),
-	    true = port_command(PortId, [Block]),
-
-	    receive
-		{PortId, {data, Block}} ->
-		    Caller ! {ok, self(), timer:now_diff(now(), StartTime)},
-		    port_loop(PortId, Block);
-
-		X ->
-		    exit({port_loop_badarg, X})
-
-	    after 1000 ->
-		    exit(port_timeout)
-	    end;
-
-	X ->
-	    exit({port_loop_unknown_message, X})
+        {port_info, Port} ->
+            {Port, Flusher}
     end.
+
+test_port_flusher(Port) ->
+    receive
+        {Port, {data, Block}} ->
+            {StartTime, _} = binary_to_term(Block),
+            true = ets:insert(?TBL_NAME, {tc, timer:now_diff(os:timestamp(), StartTime)}),
+            test_port_flusher(Port);
+        {stop, Pid} ->
+            Pid ! {ok, self()};
+        X ->
+            exit({port_loop_badarg, X})
+    end.
+              
+what_wrong_with_this(Pid, Port) ->
+    ProcInfo = (catch erlang:process_info(Pid)),
+    PortInfo = (catch erlang:port_info(Port)),
+    true = ets:insert(?TBL_NAME,
+                      [{busy_info,
+                        [
+                         {pid, Pid},
+                         {port, Port},
+                         {process_info, ProcInfo},
+                         {port_info, PortInfo}
+                        ]}]),
+    ok.
+

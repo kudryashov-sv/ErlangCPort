@@ -1,0 +1,11 @@
+{application, porttest,
+ [
+  {description, ""},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {env, [{sleep_time, 0}, {after_send_sleep, 1}]}
+ ]}.
