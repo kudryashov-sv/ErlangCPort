@@ -1,4 +1,8 @@
-Simple erlang ports test
+Bug
 
-usage:
-   make && ./run_test.sh 1000 10 3 (block size = 1000, processes count = 10, echo iterations = 3)
+Bug with ports in Erlang R16B and greater
+   
+`make && ./loadport 10000 100000 2`
+
+loadport <packet size> <check limit> <test processes count>
+

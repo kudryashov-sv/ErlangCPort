@@ -1,4 +1,4 @@
-{application, porttest,
+{application, loadport,
  [
   {description, ""},
   {vsn, "1"},
