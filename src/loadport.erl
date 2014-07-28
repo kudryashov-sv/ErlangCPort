@@ -2,6 +2,8 @@
 
 -compile(export_all).
 
+-define(PROFILER_LOG, loadport_log).
+
 run(Size, CheckLimit, ProcCount) ->
     Self = self(),
     spawn_link(
@@ -19,13 +21,42 @@ run(Size, CheckLimit, ProcCount) ->
                 lists:seq(1, ProcCount)),
               endless_flush(Port)
       end),
+    GoodPort = open_port(),
     receive
         {port, Port} ->
-            {Port, open_port()}
+            {Port, open_port(), run_port_profiler({Port, GoodPort})}
+    end.
+
+run_port_profiler(Ports) ->
+    disk_log:close(?PROFILER_LOG),
+    {ok, ?PROFILER_LOG} =
+        disk_log:open(
+          [
+           {file, "/tmp/test2.log"},
+           {format, external},
+           {name, ?PROFILER_LOG}
+          ]
+         ),
+    
+    Profiler = spawn_link(?MODULE, profiler_loop, [?PROFILER_LOG, Ports]),
+    erlang:system_profile(Profiler, [runnable_ports]).
+
+profiler_loop(Log, Ports = {Bad, Good}) ->
+    receive
+        Msg ->
+            case Msg of
+                {profile, Bad, _, _, _} ->
+                    ok = disk_log:blog(Log, io_lib:format("from bad port: ~p~n", [Msg]));
+                {profile, Good, _, _, _} ->
+                    ok = disk_log:blog(Log, io_lib:format("from good port: ~p~n", [Msg]));
+                _ ->
+                    ok
+            end,
+            profiler_loop(Log, Ports)
     end.
 
 open_port() ->
-    erlang:open_port({spawn, "/bin/sh -c cat"}, [eof, exit_status, use_stdio, binary]).
+    erlang:open_port({spawn, "./cport 100"}, [{packet, 4}, eof, exit_status, use_stdio, binary]).
 
 run_loop(Port, Block, CheckLimit, BusyCnt) ->
     case erlang:port_command(Port, Block, [nosuspend]) of
