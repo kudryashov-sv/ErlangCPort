@@ -5,3 +5,6 @@ erl_crush.dump
 erl_crash.dump
 loadport
 porttest
+logs
+async_ports_SUITE.beam
+variables-ct@wks-kudryashov
