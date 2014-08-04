@@ -45,9 +45,10 @@ permanent_busy_test(Config) ->
 
     receive
         {test_info, Port, Testers} ->
-            MaxWaitTime = round(0.5 * ?TC_TIMETRAP_SECONDS * 1000),
+            MaxWaitTime = round(0.7 * ?TC_TIMETRAP_SECONDS * 1000),
             ct:log("wait testers, maximum ~w mcsec~n", [MaxWaitTime]),
             ok = wait_testers(MaxWaitTime, Testers),
+            timer:sleep(?SLEEP_BEFORE_CHECK),
             case erlang:port_command(Port, <<"test">>, [nosuspend]) of
                 false ->
                     exit(port_dead);
